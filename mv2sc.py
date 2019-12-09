@@ -26,7 +26,7 @@ result = subprocess.run(["kubectl", "get", deployment_kind, deployment_name,
 deployment = json.loads(result.stdout)
 
 deployment_replicas = deployment["spec"]["replicas"]
-pprint.pprint((deployment_replicas))
+#pprint.pprint((deployment_replicas))
 
 # scale deployment to 0
 result = subprocess.run(["kubectl", "scale", "--replicas=0", deployment_kind,
@@ -38,7 +38,7 @@ result = subprocess.run(["kubectl", "scale", "--replicas=0", deployment_kind,
 version = datetime.datetime.now().strftime("%Y%m%d%H%M")
 
 # volumes to migrate
-pprint.pprint ((deployment["spec"]["template"]["spec"]["volumes"]))
+#pprint.pprint ((deployment["spec"]["template"]["spec"]["volumes"]))
 for volume in deployment["spec"]["template"]["spec"]["volumes"]:
     # get pvc
     result = subprocess.run(["kubectl", "get", "pvc",
@@ -87,15 +87,99 @@ spec:
 
     # wait until volume is bounded
     seconds_to_retry = 2
-    retry = 10
+    retry = 2
     bounded = False
     i = 0
-    while i < retry or bounded:
+    while i < retry and not bounded:
         time.sleep(seconds_to_retry)
         print ((i))
+        result = subprocess.run(["kubectl", "get", "pvc", versioned_pvc_name,
+                                 "-n", namespace_name, "-o", "json"],
+                                 stdout=subprocess.PIPE)
+        new_pvc = json.loads(result.stdout)
+        if new_pvc["status"]["phase"] == "Bound":
+            bounded = True
         i = i + 1
-
-
     
+    #if not bounded:
+    #    print (("timeout waiting for bound " + versioned_pvc_name))
+    #    exit (1)
 
+    # create a pod with rsyncd and origin volume mounted
+    # https://hub.docker.com/r/apnar/rsync-server
+    origin_pvc_name = pvc_name
+    rsyncd_pod = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rsyncd-%s
+  namespace: %s
+spec:
+  containers:
+  - name: rsyncd-%s
+    image: vimagick/rsyncd
+    volumeMounts:
+    - name: storage
+      mountPath: /share
+  volumes:
+  - name: storage
+    persistentVolumeClaim: 
+      claimName: %s
+    """ % (origin_pvc_name,
+           namespace_name,
+           origin_pvc_name,
+           origin_pvc_name)
+    #pprint.pprint((rsyncd_pod))
+    rsyncd_svc = """
+apiVersion: v1
+kind: Service
+metadata:
+  name: rsyncd-%s
+  namespace: %s
+spec:
+  ports:
+  - name: rsyncd
+    port: 873
+    protocol: TCP
+    targetPort: 873
+  selector:
+    name: rsyncd-%s
+  type: ClusterIP
+    """ % (origin_pvc_name,
+           namespace_name,
+           origin_pvc_name)
+#    pprint.pprint((rsyncd_svc))
 
+    result = subprocess.run(["kubectl", "apply", "-f", "-",
+                             "-n", namespace_name, "-o", "json"],
+                             stdout=subprocess.PIPE, input=rsyncd_pod.encode('utf-8'))
+    result = subprocess.run(["kubectl", "apply", "-f", "-",
+                             "-n", namespace_name, "-o", "json"],
+                             stdout=subprocess.PIPE, input=rsyncd_svc.encode('utf-8'))
+
+    # create a pod with rsync as destination
+    destination_pvc_name = versioned_pvc_name
+    rsync_pod = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rsync-%s
+  namespace: %s
+spec:
+  containers:
+  - name: rsync-%s
+    image: vimagick/rsyncd
+    volumeMounts:
+    - name: storage
+      mountPath: /share
+  volumes:
+  - name: storage
+    persistentVolumeClaim: 
+      claimName: %s
+    """ % (destination_pvc_name,
+           namespace_name,
+           destination_pvc_name,
+           destination_pvc_name)
+    result = subprocess.run(["kubectl", "apply", "-f", "-",
+                             "-n", namespace_name, "-o", "json"],
+                             stdout=subprocess.PIPE, input=rsync_pod.encode('utf-8'))
