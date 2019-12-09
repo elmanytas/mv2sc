@@ -79,7 +79,7 @@ spec:
            pvc_accessMode,
            pvc_requests_storage,
            new_storageclass_name)
-    pprint.pprint((new_pvc))
+    #pprint.pprint((new_pvc))
     
     result = subprocess.run(["kubectl", "apply", "-f", "-",
                              "-n", namespace_name, "-o", "json"],
@@ -105,7 +105,7 @@ spec:
     #    print (("timeout waiting for bound " + versioned_pvc_name))
     #    exit (1)
 
-    # create a pod with rsyncd and origin volume mounted
+    # create a pod with rsyncd and origin volume mounted in /data
     # https://hub.docker.com/r/apnar/rsync-server
     origin_pvc_name = pvc_name
     rsyncd_pod = """
@@ -117,10 +117,15 @@ metadata:
 spec:
   containers:
   - name: rsyncd-%s
-    image: vimagick/rsyncd
+    image: apnar/rsync-server
+    env:
+    - name: USERNAME
+      value: rsync
+    - name: PASSWORD
+      value: rsync
     volumeMounts:
     - name: storage
-      mountPath: /share
+      mountPath: /data
   volumes:
   - name: storage
     persistentVolumeClaim: 
@@ -139,9 +144,9 @@ metadata:
 spec:
   ports:
   - name: rsyncd
-    port: 873
+    port: 22
     protocol: TCP
-    targetPort: 873
+    targetPort: 22
   selector:
     name: rsyncd-%s
   type: ClusterIP
@@ -168,10 +173,10 @@ metadata:
 spec:
   containers:
   - name: rsync-%s
-    image: vimagick/rsyncd
+    image: apnar/rsync-server
     volumeMounts:
     - name: storage
-      mountPath: /share
+      mountPath: /data
   volumes:
   - name: storage
     persistentVolumeClaim: 
@@ -183,3 +188,5 @@ spec:
     result = subprocess.run(["kubectl", "apply", "-f", "-",
                              "-n", namespace_name, "-o", "json"],
                              stdout=subprocess.PIPE, input=rsync_pod.encode('utf-8'))
+
+    # rsync everything: https://stackoverflow.com/questions/3299951/how-to-pass-password-automatically-for-rsync-ssh-command#19570794
