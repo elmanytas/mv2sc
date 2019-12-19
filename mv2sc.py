@@ -192,11 +192,22 @@ spec:
                              "-n", namespace_name, "-o", "json"],
                              stdout=subprocess.PIPE, input=rsync_pod.encode('utf-8'))
 
+    # TODO: wait for pod started seeing pod status
     time.sleep(30)
     # rsync everything: https://stackoverflow.com/questions/3299951/how-to-pass-password-automatically-for-rsync-ssh-command#19570794
     # install sshpass
     # kubect"apt-get update; apt-get -y install sshpass"
-    result = subprocess.run(["kubectl", "-n", namespace_name, "exec", "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c", "apt-get update"])
-    result = subprocess.run(["kubectl", "-n", namespace_name, "exec", "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c", "apt-get install sshpass"])
+    result = subprocess.run(["kubectl", "-n", namespace_name, "exec",
+                             "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c",
+                             "apt-get update"])
+    result = subprocess.run(["kubectl", "-n", namespace_name, "exec",
+                             "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c",
+                             "apt-get install sshpass"])
     # "sshpass -p 'rsync' rsync --progress -avz -e 'ssh -o StrictHostKeyChecking=no' root@rsyncd-"+origin_pvc_name+":/data/ /data/"
-    result = subprocess.run(["kubectl", "-n", namespace_name, "exec", "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c", "sshpass -p 'rsync' rsync --progress -avz -e 'ssh -o StrictHostKeyChecking=no' root@rsyncd-"+origin_pvc_name+":/data/ /data/"])
+    result = subprocess.run(["kubectl", "-n", namespace_name, "exec",
+                             "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c",
+                             "sshpass -p 'rsync' rsync --progress -avz -e 'ssh -o StrictHostKeyChecking=no' root@rsyncd-"+origin_pvc_name+":/data/ /data/"])
+
+    # update deployment with new pvc
+
+  # scale to original replicas
