@@ -114,13 +114,15 @@ kind: Pod
 metadata:
   name: rsyncd-%s
   namespace: %s
+  labels:
+    name: rsyncd-%s
 spec:
   containers:
   - name: rsyncd-%s
     image: apnar/rsync-server
     env:
     - name: USERNAME
-      value: rsync
+      value: root
     - name: PASSWORD
       value: rsync
     volumeMounts:
@@ -132,6 +134,7 @@ spec:
       claimName: %s
     """ % (origin_pvc_name,
            namespace_name,
+           origin_pvc_name,
            origin_pvc_name,
            origin_pvc_name)
     #pprint.pprint((rsyncd_pod))
@@ -189,4 +192,11 @@ spec:
                              "-n", namespace_name, "-o", "json"],
                              stdout=subprocess.PIPE, input=rsync_pod.encode('utf-8'))
 
+    time.sleep(30)
     # rsync everything: https://stackoverflow.com/questions/3299951/how-to-pass-password-automatically-for-rsync-ssh-command#19570794
+    # install sshpass
+    # kubect"apt-get update; apt-get -y install sshpass"
+    result = subprocess.run(["kubectl", "-n", namespace_name, "exec", "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c", "apt-get update"])
+    result = subprocess.run(["kubectl", "-n", namespace_name, "exec", "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c", "apt-get install sshpass"])
+    # "sshpass -p 'rsync' rsync --progress -avz -e 'ssh -o StrictHostKeyChecking=no' root@rsyncd-"+origin_pvc_name+":/data/ /data/"
+    result = subprocess.run(["kubectl", "-n", namespace_name, "exec", "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c", "sshpass -p 'rsync' rsync --progress -avz -e 'ssh -o StrictHostKeyChecking=no' root@rsyncd-"+origin_pvc_name+":/data/ /data/"])
