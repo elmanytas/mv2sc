@@ -29,11 +29,12 @@ deployment_replicas = deployment["spec"]["replicas"]
 #pprint.pprint((deployment_replicas))
 
 # scale deployment to 0
+print (("scale " + deployment_kind + " " + deployment_name + " to 0"))
 result = subprocess.run(["kubectl", "scale", "--replicas=0", deployment_kind,
                          deployment_name,
                          "-n", namespace_name, "-o", "json"],
                          stdout=subprocess.PIPE)
-
+# TODO: wait until is efectively scaled to 0
 
 # get date based version for new pvc names
 version = datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -63,6 +64,8 @@ while volumeindex < len (deployment["spec"]["template"]["spec"]["volumes"]):
     else:
         versioned_pvc_name = pvc_name + "-" + version
 
+    print (("I am going to migrate " + pvc_name + " to " + versioned_pvc_name))
+
     # Create new pvc in new storageclass
     new_pvc = """
 apiVersion: v1
@@ -87,6 +90,7 @@ spec:
     result = subprocess.run(["kubectl", "apply", "-f", "-",
                              "-n", namespace_name, "-o", "json"],
                              stdout=subprocess.PIPE, input=new_pvc.encode('utf-8'))
+    print (("Creating " + versioned_pvc_name + " pvc"))
 
     # wait until volume is bounded
     seconds_to_retry = 2
@@ -106,7 +110,13 @@ spec:
     
     if not bounded:
         print (("timeout waiting for bound " + versioned_pvc_name))
+        result = subprocess.run(["kubectl", "scale", "--replicas="+str(deployment_replicas),
+                                deployment_kind, deployment_name,
+                                "-n", namespace_name, "-o", "json"],
+                                stdout=subprocess.PIPE)
         exit (1)
+    else:
+        print ((versioned_pvc_name + " pvc created and bounded"))
 
     # create a pod with rsyncd and origin volume mounted in /data
     # https://hub.docker.com/r/apnar/rsync-server
@@ -167,6 +177,7 @@ spec:
     result = subprocess.run(["kubectl", "apply", "-f", "-",
                              "-n", namespace_name, "-o", "json"],
                              stdout=subprocess.PIPE, input=rsyncd_svc.encode('utf-8'))
+    print (("Creating rsyncd-" + origin_pvc_name + " origin pod and service."))
 
     # create a pod with rsync as destination
     destination_pvc_name = versioned_pvc_name
@@ -194,6 +205,8 @@ spec:
     result = subprocess.run(["kubectl", "apply", "-f", "-",
                              "-n", namespace_name, "-o", "json"],
                              stdout=subprocess.PIPE, input=rsync_pod.encode('utf-8'))
+    print (("Creating rsync-" + destination_pvc_name + " destination pod."))
+
 
     # wait for rsync_pod Running status
     phase="notRunning"
@@ -219,9 +232,11 @@ spec:
 
         phase = rsyncd_pod["status"]["phase"]
 
+    print (("rsync data"))
     # rsync everything: https://stackoverflow.com/questions/3299951/how-to-pass-password-automatically-for-rsync-ssh-command#19570794
     # install sshpass
     # "apt-get update; apt-get -y install sshpass"
+    # TODO: create a docker image with sshpass installed
     result = subprocess.run(["kubectl", "-n", namespace_name, "exec",
                              "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c",
                              "apt-get update"])
@@ -233,6 +248,7 @@ spec:
                              "rsync-"+destination_pvc_name, "--", "/bin/bash", "-c",
                              "sshpass -p 'rsync' rsync --progress -avz -e 'ssh -o StrictHostKeyChecking=no' root@rsyncd-"+origin_pvc_name+":/data/ /data/"])
 
+    print (("Update deployment changing " + origin_pvc_name + " to " + destination_pvc_name))
     # update deployment with new pvc
     # deployment was modified when scaled to 0 so get deployment and apply changes
     result = subprocess.run(["kubectl", "get", deployment_kind, deployment_name,
@@ -246,19 +262,29 @@ spec:
                              "-n", namespace_name],
                              stdout=subprocess.PIPE, input=str(json.dumps(deployment)).encode('utf-8'))
 
+    print (("Cleaning ...:"))
     # remove rsync pods
+    print (("- rsync-"+destination_pvc_name))
     result = subprocess.run(["kubectl", "delete", "po", "rsync-"+destination_pvc_name,
                              "-n", namespace_name],
                              stdout=subprocess.PIPE)
     result = subprocess.run(["kubectl", "delete", "po", "rsyncd-"+origin_pvc_name,
                              "-n", namespace_name],
                              stdout=subprocess.PIPE)
+    # remove rsyncd service
+    result = subprocess.run(["kubectl", "delete", "svc", "rsyncd-"+origin_pvc_name,
+                             "-n", namespace_name],
+                             stdout=subprocess.PIPE)
                                 
 
     volumeindex += 1
 
+print (("Scale " + deployment_name + " to " + str(deployment_replicas) + " replicas."))
 # scale to original replicas
 result = subprocess.run(["kubectl", "scale", "--replicas="+str(deployment_replicas), deployment_kind,
                          deployment_name,
                          "-n", namespace_name, "-o", "json"],
                          stdout=subprocess.PIPE)
+
+print (("original PVCs not deleted"))
+print (("Remember to delete them!"))
